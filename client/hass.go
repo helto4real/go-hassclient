@@ -11,23 +11,32 @@ import (
 type HomeAssistantPlatform struct {
 	wsClient          *websocketClient
 	wsID              int64
-	getStateId        int64
+	getStateID        int64
 	cancelDiscovery   context.CancelFunc
 	context           context.Context
 	token             string
 	HassEntityChannel chan *HassEntity
+	list              List
 }
 
-// Initialize the Home Assistant platform
+// ServiceDataItem is used for a convenient way to provide service data in a variadic function CallService
+type ServiceDataItem struct {
+	Name  string
+	Value string
+}
+
+// NewHassClient creates a new instance of the Home Assistant client
 func NewHassClient() *HomeAssistantPlatform {
 	context, cancelDiscovery := context.WithCancel(context.Background())
 	return &HomeAssistantPlatform{
 		wsID:              1,
 		context:           context,
 		cancelDiscovery:   cancelDiscovery,
-		HassEntityChannel: make(chan *HassEntity, 1)}
+		HassEntityChannel: make(chan *HassEntity, 1),
+		list:              NewEntityList()}
 }
 
+// Start the Home Assistant Client
 func (a *HomeAssistantPlatform) Start(host string, ssl bool, token string) bool {
 	a.token = token
 	a.wsClient = a.connectWithReconnect(host, ssl)
@@ -58,6 +67,14 @@ func (a *HomeAssistantPlatform) Start(host string, ssl bool, token string) bool 
 
 }
 
+// Stop the Home Assistant client
+func (a *HomeAssistantPlatform) Stop() {
+
+	a.cancelDiscovery()
+	a.wsClient.Close(false)
+	close(a.HassEntityChannel)
+}
+
 func (a *HomeAssistantPlatform) connectWithReconnect(host string, ssl bool) *websocketClient {
 	for {
 
@@ -78,7 +95,27 @@ func (a *HomeAssistantPlatform) connectWithReconnect(host string, ssl bool) *web
 	}
 }
 
-// body map[string]interface{}
+// GetEntity returns the entity
+func (a *HomeAssistantPlatform) GetEntity(entity string) (HassEntity, bool) {
+	return a.list.GetEntity(entity)
+}
+
+//CallService makes a service call through the Home Assistant API
+func (a *HomeAssistantPlatform) CallService(service string, serviceData map[string]string) {
+	a.wsID = a.wsID + 1
+
+	s := map[string]interface{}{
+		"id":           a.wsID,
+		"type":         "call_service",
+		"domain":       "homeassistant",
+		"service":      service,
+		"service_data": serviceData}
+
+	a.wsClient.SendMap(s)
+
+}
+
+// Send a generic message to Home Assistant websocket API
 func (a *HomeAssistantPlatform) sendMessage(messageType string) {
 	a.wsID = a.wsID + 1
 	s := map[string]interface{}{
@@ -86,7 +123,7 @@ func (a *HomeAssistantPlatform) sendMessage(messageType string) {
 		"type": messageType}
 
 	if messageType == "get_states" {
-		a.getStateId = a.wsID
+		a.getStateID = a.wsID
 	}
 	a.wsClient.SendMap(s)
 
@@ -116,11 +153,11 @@ func (a *HomeAssistantPlatform) handleMessage(message Result) {
 		a.sendMessage("get_states")
 	} else if message.MessageType == "result" {
 
-		if message.Id == a.getStateId {
+		if message.Id == a.getStateID {
 			log.Println("Got all states, getting events")
 			for _, data := range message.Result {
-				newHassEntity := NewHassEntity("hass_"+data.EntityId, data.EntityId, "hass", data.State, data.Attributes)
-
+				newHassEntity := NewHassEntity(data.EntityId, data.EntityId, "hass", data.State, data.Attributes)
+				a.list.SetEntity(newHassEntity)
 				a.HassEntityChannel <- newHassEntity
 			}
 
@@ -129,18 +166,12 @@ func (a *HomeAssistantPlatform) handleMessage(message Result) {
 	} else if message.MessageType == "event" {
 		data := message.Event.Data
 		log.Println("---------------------------------------")
-		log.Println("message->: %s=%s", data.EntityId, data.NewState.State)
+		log.Printf("message->: %s=%s", data.EntityId, data.NewState.State)
 		log.Println("---------------------------------------")
-		newHassEntity := NewHassEntity("hass_"+data.EntityId, data.EntityId, "hass", data.NewState.State, data.NewState.Attributes)
+		newHassEntity := NewHassEntity(data.EntityId, data.EntityId, "hass", data.NewState.State, data.NewState.Attributes)
+		a.list.SetEntity(newHassEntity)
 		a.HassEntityChannel <- newHassEntity
 
 	}
 
-}
-
-func (a *HomeAssistantPlatform) Stop() {
-
-	a.cancelDiscovery()
-	a.wsClient.Close(false)
-	close(a.HassEntityChannel)
 }
