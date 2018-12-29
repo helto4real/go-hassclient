@@ -7,6 +7,17 @@ import (
 	"time"
 )
 
+// DaemonApplication represents an application
+type HomeAssistant interface {
+	// Start daemon only use in main
+	Start(host string, ssl bool, token string) bool
+	// Stop daemon only use in main
+	Stop()
+	GetEntity(entity string) (HassEntity, bool)
+	CallService(service string, serviceData map[string]string)
+	GetEntityChannel() chan *HassEntity
+}
+
 // HomeAssistantPlatform implements integration with Home Assistant
 type HomeAssistantPlatform struct {
 	wsClient          *websocketClient
@@ -34,6 +45,10 @@ func NewHassClient() *HomeAssistantPlatform {
 		cancelDiscovery:   cancelDiscovery,
 		HassEntityChannel: make(chan *HassEntity, 1),
 		list:              NewEntityList()}
+}
+
+func (a *HomeAssistantPlatform) GetEntityChannel() chan *HassEntity {
+	return a.HassEntityChannel
 }
 
 // Start the Home Assistant Client
