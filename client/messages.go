@@ -28,8 +28,8 @@ type EventData struct {
 }
 
 type StateData struct {
-	LastChanged string            `json:"last_changed"`
-	LastUpdated string            `json:"last_updated"`
-	State       string            `json:"state"`
-	Attributes  map[string]string `json:"attributes"`
+	LastChanged string                 `json:"last_changed"`
+	LastUpdated string                 `json:"last_updated"`
+	State       interface{}            `json:"state"`
+	Attributes  map[string]interface{} `json:"attributes"`
 }

@@ -3,11 +3,12 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"time"
 )
 
-// DaemonApplication represents an application
+// HomeAssistant interface represents Home Assistant
 type HomeAssistant interface {
 	// Start daemon only use in main
 	Start(host string, ssl bool, token string) bool
@@ -16,6 +17,7 @@ type HomeAssistant interface {
 	GetEntity(entity string) (HassEntity, bool)
 	CallService(service string, serviceData map[string]string)
 	GetEntityChannel() chan *HassEntity
+	GetStatusChannel() chan bool
 }
 
 // HomeAssistantPlatform implements integration with Home Assistant
@@ -27,6 +29,7 @@ type HomeAssistantPlatform struct {
 	context           context.Context
 	token             string
 	HassEntityChannel chan *HassEntity
+	HassStatusChannel chan bool
 	list              List
 }
 
@@ -44,11 +47,16 @@ func NewHassClient() *HomeAssistantPlatform {
 		context:           context,
 		cancelDiscovery:   cancelDiscovery,
 		HassEntityChannel: make(chan *HassEntity, 1),
+		HassStatusChannel: make(chan bool, 1),
 		list:              NewEntityList()}
 }
 
 func (a *HomeAssistantPlatform) GetEntityChannel() chan *HassEntity {
 	return a.HassEntityChannel
+}
+
+func (a *HomeAssistantPlatform) GetStatusChannel() chan bool {
+	return a.HassStatusChannel
 }
 
 // Start the Home Assistant Client
@@ -95,6 +103,7 @@ func (a *HomeAssistantPlatform) connectWithReconnect(host string, ssl bool) *web
 
 		client := ConnectWS(host, "/api/websocket", ssl)
 		if client == nil {
+			a.HassStatusChannel <- false
 			log.Println("Fail to connect, reconnecting to Home Assistant in 30 seconds...")
 			// Fail to connect wait to connect again
 			select {
@@ -158,35 +167,59 @@ func (a *HomeAssistantPlatform) subscribeEvents() {
 func (a *HomeAssistantPlatform) handleMessage(message Result) {
 
 	if message.MessageType == "auth_required" {
-		log.Print("message->: ", message)
-		log.Println("Got auth required, sending auth token")
+		//	log.Print("message->: ", message)
+		log.Println("Authorizing with Home Assistant...")
 
 		a.wsClient.SendString("{\"type\": \"auth\",\"access_token\": \"" + a.token + "\"}")
 	} else if message.MessageType == "auth_ok" {
-		log.Print("message->: ", message)
-		log.Println("Got auth_ok, downloading all states initially")
+		//		log.Print("message->: ", message)
+		log.Println("Autorization ok...")
 		a.sendMessage("get_states")
 	} else if message.MessageType == "result" {
 
 		if message.Id == a.getStateID {
 			log.Println("Got all states, getting events")
 			for _, data := range message.Result {
-				newHassEntity := NewHassEntity(data.EntityId, data.EntityId, "hass", data.State, data.Attributes)
+				new := HassEntityState{
+					State:      data.State,
+					Attributes: data.Attributes}
+
+				old := HassEntityState{}
+				newHassEntity := NewHassEntity(data.EntityId, data.EntityId, "hass", old, new)
 				a.list.SetEntity(newHassEntity)
 				a.HassEntityChannel <- newHassEntity
 			}
 
 			a.subscribeEvents()
+			log.Println("Home Assistant integration ready!")
+			a.HassStatusChannel <- true
 		}
 	} else if message.MessageType == "event" {
 		data := message.Event.Data
-		log.Println("---------------------------------------")
-		log.Printf("message->: %s=%s", data.EntityId, data.NewState.State)
-		log.Println("---------------------------------------")
-		newHassEntity := NewHassEntity(data.EntityId, data.EntityId, "hass", data.NewState.State, data.NewState.Attributes)
+		// log.Println("---------------------------------------")
+		// log.Printf("message->: %s=%s", data.EntityId, data.NewState.State)
+		// log.Println("---------------------------------------")
+
+		new := HassEntityState{
+			State:      fmt.Sprint(data.NewState.State),
+			Attributes: convertToStringMap(data.NewState.Attributes)}
+		old := HassEntityState{
+			State:      fmt.Sprint(data.OldState.State),
+			Attributes: convertToStringMap(data.OldState.Attributes)}
+
+		newHassEntity := NewHassEntity(data.EntityId, data.EntityId, "hass", old, new)
 		a.list.SetEntity(newHassEntity)
 		a.HassEntityChannel <- newHassEntity
 
 	}
 
+}
+
+func convertToStringMap(unknown map[string]interface{}) map[string]string {
+	returnMap := map[string]string{}
+
+	for key, val := range unknown {
+		returnMap[key] = fmt.Sprint(val)
+	}
+	return returnMap
 }

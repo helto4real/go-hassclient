@@ -50,7 +50,7 @@ func (a *List) GetEntity(entityID string) (HassEntity, bool) {
 func (a *List) SetEntity(entity *HassEntity) {
 	a.m.Lock()
 	defer a.m.Unlock()
-	a.entities[entity.GetID()] = *entity
+	a.entities[entity.ID] = *entity
 }
 
 // ByID sorting by the id
@@ -58,4 +58,4 @@ type ByID []HassEntity
 
 func (e ByID) Len() int           { return len(e) }
 func (e ByID) Swap(i, j int)      { e[i], e[j] = e[j], e[i] }
-func (e ByID) Less(i, j int) bool { return e[i].GetID() < e[j].GetID() }
+func (e ByID) Less(i, j int) bool { return e[i].ID < e[j].ID }
