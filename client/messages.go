@@ -33,3 +33,8 @@ type StateData struct {
 	State       interface{}            `json:"state"`
 	Attributes  map[string]interface{} `json:"attributes"`
 }
+
+type SetStateData struct {
+	State      interface{}       `json:"state"`
+	Attributes map[string]string `json:"attributes"`
+}

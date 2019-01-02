@@ -1,12 +1,19 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"net/http"
+	"net/url"
+
 	"time"
+
+	"github.com/sirupsen/logrus"
 )
+
+var log *logrus.Entry
 
 // HomeAssistant interface represents Home Assistant
 type HomeAssistant interface {
@@ -14,7 +21,8 @@ type HomeAssistant interface {
 	Start(host string, ssl bool, token string) bool
 	// Stop daemon only use in main
 	Stop()
-	GetEntity(entity string) (HassEntity, bool)
+	GetEntity(entity string) (*HassEntity, bool)
+	SetEntity(entity *HassEntity) bool
 	CallService(service string, serviceData map[string]string)
 	GetEntityChannel() chan *HassEntity
 	GetStatusChannel() chan bool
@@ -31,6 +39,9 @@ type HomeAssistantPlatform struct {
 	HassEntityChannel chan *HassEntity
 	HassStatusChannel chan bool
 	list              List
+	host              string
+	ssl               bool
+	httpClient        *http.Client
 }
 
 // ServiceDataItem is used for a convenient way to provide service data in a variadic function CallService
@@ -48,7 +59,8 @@ func NewHassClient() *HomeAssistantPlatform {
 		cancelDiscovery:   cancelDiscovery,
 		HassEntityChannel: make(chan *HassEntity, 1),
 		HassStatusChannel: make(chan bool, 1),
-		list:              NewEntityList()}
+		list:              NewEntityList(),
+		httpClient:        &http.Client{}}
 }
 
 func (a *HomeAssistantPlatform) GetEntityChannel() chan *HassEntity {
@@ -62,14 +74,16 @@ func (a *HomeAssistantPlatform) GetStatusChannel() chan bool {
 // Start the Home Assistant Client
 func (a *HomeAssistantPlatform) Start(host string, ssl bool, token string) bool {
 	a.token = token
-	a.wsClient = a.connectWithReconnect(host, ssl)
+	a.host = host
+	a.ssl = ssl
+	a.wsClient = a.connectWithReconnect()
 
 	for {
 		select {
 		case message, mc := <-a.wsClient.ReceiveChannel:
 			if !mc {
 				if a.wsClient.Fatal {
-					a.wsClient = a.connectWithReconnect(host, ssl)
+					a.wsClient = a.connectWithReconnect()
 					if a.wsClient == nil {
 						log.Println("Ending service discovery")
 						return false
@@ -98,10 +112,10 @@ func (a *HomeAssistantPlatform) Stop() {
 	close(a.HassEntityChannel)
 }
 
-func (a *HomeAssistantPlatform) connectWithReconnect(host string, ssl bool) *websocketClient {
+func (a *HomeAssistantPlatform) connectWithReconnect() *websocketClient {
 	for {
 
-		client := ConnectWS(host, "/api/websocket", ssl)
+		client := ConnectWS(a.host, "/api/websocket", a.ssl)
 		if client == nil {
 			a.HassStatusChannel <- false
 			log.Println("Fail to connect, reconnecting to Home Assistant in 30 seconds...")
@@ -120,8 +134,41 @@ func (a *HomeAssistantPlatform) connectWithReconnect(host string, ssl bool) *web
 }
 
 // GetEntity returns the entity
-func (a *HomeAssistantPlatform) GetEntity(entity string) (HassEntity, bool) {
+func (a *HomeAssistantPlatform) GetEntity(entity string) (*HassEntity, bool) {
 	return a.list.GetEntity(entity)
+}
+
+// SetEntity sets the entity to the map
+func (a *HomeAssistantPlatform) SetEntity(entity *HassEntity) bool {
+	var scheme = "http"
+	if a.ssl == true {
+		scheme = "https"
+	}
+	u := url.URL{Scheme: scheme, Host: a.host, Path: "/api/states/" + url.PathEscape(entity.ID)}
+
+	stateData := SetStateData{State: entity.New.State, Attributes: entity.New.Attributes}
+	b, err := json.Marshal(stateData)
+
+	if err != nil {
+		log.Errorf("Failed to marshal state data from entity %s, data : %v", entity, err)
+		return false
+	}
+
+	req, err := http.NewRequest("POST", u.String(), bytes.NewReader(b))
+	if err == nil {
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+a.token)
+
+		resp, err := a.httpClient.Do(req)
+		if err == nil {
+			defer resp.Body.Close()
+			if resp.StatusCode == 200 || resp.StatusCode == 201 {
+				return true
+			}
+		}
+	}
+	return false
+
 }
 
 //CallService makes a service call through the Home Assistant API
@@ -168,17 +215,17 @@ func (a *HomeAssistantPlatform) handleMessage(message Result) {
 
 	if message.MessageType == "auth_required" {
 		//	log.Print("message->: ", message)
-		log.Println("Authorizing with Home Assistant...")
+		log.Debugln("Authorizing with Home Assistant...")
 
 		a.wsClient.SendString("{\"type\": \"auth\",\"access_token\": \"" + a.token + "\"}")
 	} else if message.MessageType == "auth_ok" {
 		//		log.Print("message->: ", message)
-		log.Println("Autorization ok...")
+		log.Debugln("Autorization ok...")
 		a.sendMessage("get_states")
 	} else if message.MessageType == "result" {
 
 		if message.Id == a.getStateID {
-			log.Println("Got all states, getting events")
+			log.Debugln("Got all states, getting events")
 			for _, data := range message.Result {
 				new := HassEntityState{
 					State:      data.State,
@@ -191,14 +238,12 @@ func (a *HomeAssistantPlatform) handleMessage(message Result) {
 			}
 
 			a.subscribeEvents()
-			log.Println("Home Assistant integration ready!")
+			log.Info("Home Assistant integration ready!")
 			a.HassStatusChannel <- true
 		}
 	} else if message.MessageType == "event" {
 		data := message.Event.Data
-		// log.Println("---------------------------------------")
-		// log.Printf("message->: %s=%s", data.EntityId, data.NewState.State)
-		// log.Println("---------------------------------------")
+		log.Debugf("message->: %s=%s", data.EntityId, data.NewState.State)
 
 		new := HassEntityState{
 			State:      fmt.Sprint(data.NewState.State),
@@ -222,4 +267,10 @@ func convertToStringMap(unknown map[string]interface{}) map[string]string {
 		returnMap[key] = fmt.Sprint(val)
 	}
 	return returnMap
+}
+
+func init() {
+
+	log = logrus.WithField("prefix", "hassclient")
+
 }

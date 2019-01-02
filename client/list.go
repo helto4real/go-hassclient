@@ -39,14 +39,14 @@ func (a *List) GetEntities() chan HassEntity {
 }
 
 // GetEntity returns entity given the entity id, second return value returns false if no entity exists
-func (a *List) GetEntity(entityID string) (HassEntity, bool) {
+func (a *List) GetEntity(entityID string) (*HassEntity, bool) {
 	a.m.Lock()
 	defer a.m.Unlock()
 	entity, ok := a.entities[entityID]
-	return entity, ok
+	return &entity, ok
 }
 
-// SetEntity returns true if not exist or state changed
+// SetEntity sets the entity to the map
 func (a *List) SetEntity(entity *HassEntity) {
 	a.m.Lock()
 	defer a.m.Unlock()

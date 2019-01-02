@@ -3,7 +3,6 @@ package client
 import (
 	"bytes"
 	"encoding/json"
-	"log"
 	"net/url"
 	"sync"
 	"time"
@@ -56,7 +55,7 @@ func (c *websocketClient) readPump() {
 	defer func() {
 		c.syncRoutines.Done()
 		c.Close(true)
-		log.Printf("Close ws readpump")
+		log.Traceln("Close ws readpump")
 
 	}()
 	c.conn.SetReadLimit(maxMessageSize)
@@ -66,9 +65,9 @@ func (c *websocketClient) readPump() {
 		_, message, err := c.conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				log.Printf("Unexpected close error: %v", err)
+				log.Errorf("Unexpected close error: %v", err)
 			} else {
-				log.Printf("Error reading websocket: %v", err)
+				log.Errorf("Error reading websocket: %v", err)
 			}
 
 			return
@@ -97,14 +96,14 @@ func (c *websocketClient) Close(fatal bool) {
 
 	//  Wait for the routines to stop
 	c.syncRoutines.Wait()
-	log.Printf("Closing websocket")
+	log.Tracef("Closing websocket")
 }
 
 func (c *websocketClient) SendMap(message map[string]interface{}) {
 
 	jsonString, err := json.Marshal(message)
 	if err != nil {
-		log.Printf("Error marshal message: %s", err)
+		log.Errorf("Error marshal message: %s", err)
 		return
 	}
 
@@ -174,7 +173,7 @@ func ConnectWS(ip string, path string, ssl bool) *websocketClient {
 
 	c, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
 	if err != nil {
-		log.Print("dial:", err)
+		log.Error("dial:", err)
 		return nil
 	}
 
