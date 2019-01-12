@@ -36,7 +36,7 @@ type HomeAssistantPlatform struct {
 	cancelDiscovery   context.CancelFunc
 	context           context.Context
 	token             string
-	HassEntityChannel chan *HassEntity
+	HassChannel       chan interface{}
 	HassStatusChannel chan bool
 	list              List
 	host              string
@@ -57,14 +57,14 @@ func NewHassClient() *HomeAssistantPlatform {
 		wsID:              1,
 		context:           context,
 		cancelDiscovery:   cancelDiscovery,
-		HassEntityChannel: make(chan *HassEntity, 1),
-		HassStatusChannel: make(chan bool, 1),
+		HassChannel:       make(chan interface{}, 10),
+		HassStatusChannel: make(chan bool, 2),
 		list:              NewEntityList(),
 		httpClient:        &http.Client{}}
 }
 
-func (a *HomeAssistantPlatform) GetEntityChannel() chan *HassEntity {
-	return a.HassEntityChannel
+func (a *HomeAssistantPlatform) GetHassChannel() chan interface{} {
+	return a.HassChannel
 }
 
 func (a *HomeAssistantPlatform) GetStatusChannel() chan bool {
@@ -93,8 +93,13 @@ func (a *HomeAssistantPlatform) Start(host string, ssl bool, token string) bool 
 				}
 
 			}
+			s := string(message)
+			fmt.Println(s)
 			var result Result
-			json.Unmarshal(message, &result)
+			err := json.Unmarshal(message, &result)
+			if err != nil {
+				log.Error(err)
+			}
 			go a.handleMessage(result)
 		case <-a.context.Done():
 			return false
@@ -109,7 +114,8 @@ func (a *HomeAssistantPlatform) Stop() {
 
 	a.cancelDiscovery()
 	a.wsClient.Close(false)
-	close(a.HassEntityChannel)
+	close(a.HassChannel)
+	close(a.HassStatusChannel)
 }
 
 func (a *HomeAssistantPlatform) connectWithReconnect() *websocketClient {
@@ -200,12 +206,23 @@ func (a *HomeAssistantPlatform) sendMessage(messageType string) {
 
 }
 
-func (a *HomeAssistantPlatform) subscribeEvents() {
+func (a *HomeAssistantPlatform) subscribeEventsStateChanged() {
 	a.wsID = a.wsID + 1
 	s := map[string]interface{}{
 		"id":         a.wsID,
 		"type":       "subscribe_events",
 		"event_type": "state_changed"}
+
+	a.wsClient.SendMap(s)
+
+}
+
+func (a *HomeAssistantPlatform) subscribeEventsCallService() {
+	a.wsID = a.wsID + 1
+	s := map[string]interface{}{
+		"id":         a.wsID,
+		"type":       "subscribe_events",
+		"event_type": "call_service"}
 
 	a.wsClient.SendMap(s)
 
@@ -225,49 +242,71 @@ func (a *HomeAssistantPlatform) handleMessage(message Result) {
 	} else if message.MessageType == "result" {
 
 		if message.Id == a.getStateID {
-			log.Debugln("Got all states, getting events")
+			log.Debugf("Got all states, getting events [%v]", message.Id)
 			for _, data := range message.Result {
+				lastUpdated, _ := time.Parse(time.RFC3339, data.LastUpdated)
+				lastChanged, _ := time.Parse(time.RFC3339, data.LastChanged)
 				new := HassEntityState{
-					State:      data.State,
-					Attributes: data.Attributes}
+					LastUpdated: lastUpdated,
+					LastChanged: lastChanged,
+					State:       data.State,
+					Attributes:  data.Attributes}
 
 				old := HassEntityState{}
-				newHassEntity := NewHassEntity(data.EntityId, data.EntityId, "hass", old, new)
+				newHassEntity := NewHassEntity(data.EntityId, data.EntityId, old, new)
 				a.list.SetEntity(newHassEntity)
-				a.HassEntityChannel <- newHassEntity
+				a.HassChannel <- *newHassEntity
 			}
 
-			a.subscribeEvents()
+			//a.subscribeEventsStateChanged()
+			a.subscribeEventsCallService()
 			log.Info("Home Assistant integration ready!")
 			a.HassStatusChannel <- true
 		}
 	} else if message.MessageType == "event" {
-		data := message.Event.Data
-		log.Debugf("message->: %s=%s", data.EntityId, data.NewState.State)
+		if message.Event.EventType == "status_changed" {
+			data := message.Event.Data
+			log.Debugf("message->: %s=%s", data.EntityId, data.NewState.State)
+			lastUpdated, _ := time.Parse(time.RFC3339, data.NewState.LastUpdated)
+			lastChanged, _ := time.Parse(time.RFC3339, data.NewState.LastChanged)
+			new := HassEntityState{
+				LastUpdated: lastUpdated,
+				LastChanged: lastChanged,
+				State:       fmt.Sprint(data.NewState.State),
+				Attributes:  data.NewState.Attributes}
+			lastUpdated, _ = time.Parse(time.RFC3339, data.OldState.LastUpdated)
+			lastChanged, _ = time.Parse(time.RFC3339, data.OldState.LastChanged)
 
-		new := HassEntityState{
-			State:      fmt.Sprint(data.NewState.State),
-			Attributes: convertToStringMap(data.NewState.Attributes)}
-		old := HassEntityState{
-			State:      fmt.Sprint(data.OldState.State),
-			Attributes: convertToStringMap(data.OldState.Attributes)}
+			old := HassEntityState{
+				LastUpdated: lastUpdated,
+				LastChanged: lastChanged,
+				State:       fmt.Sprint(data.OldState.State),
+				Attributes:  data.OldState.Attributes}
 
-		newHassEntity := NewHassEntity(data.EntityId, data.EntityId, "hass", old, new)
-		a.list.SetEntity(newHassEntity)
-		a.HassEntityChannel <- newHassEntity
+			newHassEntity := NewHassEntity(data.EntityId, data.EntityId, old, new)
+			a.list.SetEntity(newHassEntity)
+			a.HassChannel <- *newHassEntity
+		} else if message.Event.EventType == "call_service" {
+
+			timeFired, _ := time.Parse(time.RFC3339, message.Event.TimeFired)
+			newHassCallServiceEvent := NewHassCallServiceEvent(timeFired, message.Event.Data.Domain,
+				message.Event.Data.Service, message.Event.Data.ServiceData)
+			a.HassChannel <- *newHassCallServiceEvent
+
+		}
 
 	}
 
 }
 
-func convertToStringMap(unknown map[string]interface{}) map[string]string {
-	returnMap := map[string]string{}
+// func convertToStringMap(unknown map[string]interface{}) map[string]string {
+// 	returnMap := map[string]string{}
 
-	for key, val := range unknown {
-		returnMap[key] = fmt.Sprint(val)
-	}
-	return returnMap
-}
+// 	for key, val := range unknown {
+// 		returnMap[key] = fmt.Sprint(val)
+// 	}
+// 	return returnMap
+// }
 
 func init() {
 

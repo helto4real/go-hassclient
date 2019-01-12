@@ -9,11 +9,11 @@ type Result struct {
 }
 
 type GetResult struct {
-	EntityId    string            `json:"entity_id"`
-	LastChanged string            `json:"last_changed"`
-	LastUpdated string            `json:"last_updated"`
-	State       string            `json:"state"`
-	Attributes  map[string]string `json:"attributes"`
+	EntityId    string                 `json:"entity_id"`
+	LastChanged string                 `json:"last_changed"`
+	LastUpdated string                 `json:"last_updated"`
+	State       string                 `json:"state"`
+	Attributes  map[string]interface{} `json:"attributes"`
 }
 type Event struct {
 	Data      EventData `json:"data"`
@@ -22,9 +22,12 @@ type Event struct {
 }
 
 type EventData struct {
-	EntityId string    `json:"entity_id"`
-	NewState StateData `json:"new_state"`
-	OldState StateData `json:"old_state"`
+	EntityId    string                 `json:"entity_id"`
+	NewState    StateData              `json:"new_state"`
+	OldState    StateData              `json:"old_state"`
+	Domain      string                 `json:"domain"`
+	Service     string                 `json:"service"`
+	ServiceData map[string]interface{} `json:"service_data"`
 }
 
 type StateData struct {
@@ -35,6 +38,6 @@ type StateData struct {
 }
 
 type SetStateData struct {
-	State      interface{}       `json:"state"`
-	Attributes map[string]string `json:"attributes"`
+	State      interface{}            `json:"state"`
+	Attributes map[string]interface{} `json:"attributes"`
 }
