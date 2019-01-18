@@ -51,8 +51,8 @@ func (a HassEntity) String() string {
 	attributes:`
 
 	formatAttr := `
-	- %s: %s`
-	result := fmt.Sprintf(format, a.Name, a.New, a.New.LastUpdated, a.New.LastChanged)
+	- %s: %v`
+	result := fmt.Sprintf(format, a.Name, a.New.State, a.New.LastUpdated, a.New.LastChanged)
 	if len(a.New.Attributes) > 0 {
 
 		for attr, val := range a.New.Attributes {

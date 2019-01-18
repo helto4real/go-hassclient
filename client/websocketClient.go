@@ -21,18 +21,13 @@ const (
 	pingPeriod = (pongWait * 9) / 10
 
 	// Maximum message size allowed from peer.
-	maxMessageSize = 262144
+	maxMessageSize = 862144
 )
 
 var (
 	newline = []byte{'\n'}
 	space   = []byte{' '}
 )
-
-var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
-}
 
 // Client is a middleman between the websocket connection and the hub.
 type websocketClient struct {
@@ -177,7 +172,7 @@ func ConnectWS(ip string, path string, ssl bool) *websocketClient {
 		return nil
 	}
 
-	client := &websocketClient{conn: c, SendChannel: make(chan []byte, 256), ReceiveChannel: make(chan []byte), Fatal: false}
+	client := &websocketClient{conn: c, SendChannel: make(chan []byte, 256), ReceiveChannel: make(chan []byte, 2), Fatal: false}
 
 	// Do write and read operations in own go routines
 	go client.writePump()

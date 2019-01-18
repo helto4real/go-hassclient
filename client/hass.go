@@ -24,7 +24,7 @@ type HomeAssistant interface {
 	GetEntity(entity string) (*HassEntity, bool)
 	SetEntity(entity *HassEntity) bool
 	CallService(service string, serviceData map[string]string)
-	GetEntityChannel() chan *HassEntity
+	GetHassChannel() chan interface{}
 	GetStatusChannel() chan bool
 }
 
@@ -93,14 +93,16 @@ func (a *HomeAssistantPlatform) Start(host string, ssl bool, token string) bool 
 				}
 
 			}
-			s := string(message)
-			fmt.Println(s)
+			// s := string(message)
+			// fmt.Println(s)
 			var result Result
 			err := json.Unmarshal(message, &result)
 			if err != nil {
 				log.Error(err)
+			} else {
+				go a.handleMessage(result)
 			}
-			go a.handleMessage(result)
+
 		case <-a.context.Done():
 			return false
 		}
@@ -209,24 +211,23 @@ func (a *HomeAssistantPlatform) sendMessage(messageType string) {
 func (a *HomeAssistantPlatform) subscribeEventsStateChanged() {
 	a.wsID = a.wsID + 1
 	s := map[string]interface{}{
-		"id":         a.wsID,
-		"type":       "subscribe_events",
-		"event_type": "state_changed"}
+		"id":   a.wsID,
+		"type": "subscribe_events"} //"event_type": "state_changed"
 
 	a.wsClient.SendMap(s)
 
 }
 
-func (a *HomeAssistantPlatform) subscribeEventsCallService() {
-	a.wsID = a.wsID + 1
-	s := map[string]interface{}{
-		"id":         a.wsID,
-		"type":       "subscribe_events",
-		"event_type": "call_service"}
+// func (a *HomeAssistantPlatform) subscribeEventsCallService() {
+// 	a.wsID = a.wsID + 1
+// 	s := map[string]interface{}{
+// 		"id":         a.wsID,
+// 		"type":       "subscribe_events",
+// 		"event_type": "call_service"}
 
-	a.wsClient.SendMap(s)
+// 	a.wsClient.SendMap(s)
 
-}
+// }
 
 func (a *HomeAssistantPlatform) handleMessage(message Result) {
 
@@ -258,13 +259,13 @@ func (a *HomeAssistantPlatform) handleMessage(message Result) {
 				a.HassChannel <- *newHassEntity
 			}
 
-			//a.subscribeEventsStateChanged()
-			a.subscribeEventsCallService()
+			//			a.subscribeEventsCallService()
+			a.subscribeEventsStateChanged()
 			log.Info("Home Assistant integration ready!")
 			a.HassStatusChannel <- true
 		}
 	} else if message.MessageType == "event" {
-		if message.Event.EventType == "status_changed" {
+		if message.Event.EventType == "state_changed" {
 			data := message.Event.Data
 			log.Debugf("message->: %s=%s", data.EntityId, data.NewState.State)
 			lastUpdated, _ := time.Parse(time.RFC3339, data.NewState.LastUpdated)
@@ -293,20 +294,13 @@ func (a *HomeAssistantPlatform) handleMessage(message Result) {
 				message.Event.Data.Service, message.Event.Data.ServiceData)
 			a.HassChannel <- *newHassCallServiceEvent
 
+		} else {
+			//log.Warning(message)
 		}
 
 	}
 
 }
-
-// func convertToStringMap(unknown map[string]interface{}) map[string]string {
-// 	returnMap := map[string]string{}
-
-// 	for key, val := range unknown {
-// 		returnMap[key] = fmt.Sprint(val)
-// 	}
-// 	return returnMap
-// }
 
 func init() {
 
