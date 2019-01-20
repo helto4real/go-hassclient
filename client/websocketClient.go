@@ -68,7 +68,7 @@ func (c *websocketClient) readPump() {
 			return
 		}
 		message = bytes.TrimSpace(bytes.Replace(message, newline, space, -1))
-		log.Warn(string(message))
+
 		c.ReceiveChannel <- message
 
 	}
