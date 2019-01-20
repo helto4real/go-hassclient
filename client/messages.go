@@ -4,7 +4,7 @@ type Result struct {
 	Id          int64       `json:"id"`
 	MessageType string      `json:"type"`
 	Success     bool        `json:"success"`
-	Result      []GetResult `json:"result"`
+	Result      interface{} `json:"result"`
 	Event       Event       `json:"event"`
 }
 

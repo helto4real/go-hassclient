@@ -33,6 +33,7 @@ type HomeAssistantPlatform struct {
 	wsClient          *websocketClient
 	wsID              int64
 	getStateID        int64
+	getConfigID       int64
 	cancelDiscovery   context.CancelFunc
 	context           context.Context
 	token             string
@@ -42,6 +43,7 @@ type HomeAssistantPlatform struct {
 	host              string
 	ssl               bool
 	httpClient        *http.Client
+	HassConfig        *HassConfig
 }
 
 // ServiceDataItem is used for a convenient way to provide service data in a variadic function CallService
@@ -60,6 +62,7 @@ func NewHassClient() *HomeAssistantPlatform {
 		HassChannel:       make(chan interface{}, 10),
 		HassStatusChannel: make(chan bool, 2),
 		list:              NewEntityList(),
+		HassConfig:        &HassConfig{},
 		httpClient:        &http.Client{}}
 }
 
@@ -203,6 +206,8 @@ func (a *HomeAssistantPlatform) sendMessage(messageType string) {
 
 	if messageType == "get_states" {
 		a.getStateID = a.wsID
+	} else if messageType == "get_config" {
+		a.getConfigID = a.wsID
 	}
 	a.wsClient.SendMap(s)
 
@@ -239,30 +244,43 @@ func (a *HomeAssistantPlatform) handleMessage(message Result) {
 	} else if message.MessageType == "auth_ok" {
 		//		log.Print("message->: ", message)
 		log.Debugln("Autorization ok...")
-		a.sendMessage("get_states")
+		a.sendMessage("get_config")
+
 	} else if message.MessageType == "result" {
 
 		if message.Id == a.getStateID {
 			log.Debugf("Got all states, getting events [%v]", message.Id)
-			for _, data := range message.Result {
-				lastUpdated, _ := time.Parse(time.RFC3339, data.LastUpdated)
-				lastChanged, _ := time.Parse(time.RFC3339, data.LastChanged)
+			results := message.Result.([]interface{})
+			for _, data := range results {
+				item := data.(map[string]interface{})
+				lastUpdated, _ := time.Parse(time.RFC3339, item["last_updated"].(string))
+				lastChanged, _ := time.Parse(time.RFC3339, item["last_changed"].(string))
 				new := HassEntityState{
 					LastUpdated: lastUpdated,
 					LastChanged: lastChanged,
-					State:       data.State,
-					Attributes:  data.Attributes}
+					State:       item["state"].(string),
+					Attributes:  item["attributes"].(map[string]interface{})}
 
 				old := HassEntityState{}
-				newHassEntity := NewHassEntity(data.EntityId, data.EntityId, old, new)
+				newHassEntity := NewHassEntity(item["entity_id"].(string), item["entity_id"].(string), old, new)
 				a.list.SetEntity(newHassEntity)
 				a.HassChannel <- *newHassEntity
+
 			}
 
 			//			a.subscribeEventsCallService()
 			a.subscribeEventsStateChanged()
 			log.Info("Home Assistant integration ready!")
 			a.HassStatusChannel <- true
+		} else if message.Id == a.getConfigID {
+
+			result := message.Result.(map[string]interface{})
+			a.HassConfig.Latitude = result["latitude"].(float64)
+			a.HassConfig.Longitude = result["longitude"].(float64)
+			a.HassConfig.Elevation = result["elevation"].(float64)
+
+			a.sendMessage("get_states")
+
 		}
 	} else if message.MessageType == "event" {
 		if message.Event.EventType == "state_changed" {
