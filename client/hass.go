@@ -26,6 +26,7 @@ type HomeAssistant interface {
 	CallService(service string, serviceData map[string]string)
 	GetHassChannel() chan interface{}
 	GetStatusChannel() chan bool
+	GetConfig() *HassConfig
 }
 
 // HomeAssistantPlatform implements integration with Home Assistant
@@ -64,6 +65,10 @@ func NewHassClient() *HomeAssistantPlatform {
 		list:              NewEntityList(),
 		HassConfig:        &HassConfig{},
 		httpClient:        &http.Client{}}
+}
+
+func (a *HomeAssistantPlatform) GetConfig() *HassConfig {
+	return a.HassConfig
 }
 
 func (a *HomeAssistantPlatform) GetHassChannel() chan interface{} {
