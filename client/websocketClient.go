@@ -77,21 +77,25 @@ func (c *websocketClient) readPump() {
 // Close the web socket client to free all resources and stop and wait for goroutines
 func (c *websocketClient) Close(fatal bool) {
 	c.Fatal = fatal
-	if c.ReceiveChannel == nil || c.SendChannel == nil {
-		return
+
+	if c.ReceiveChannel != nil {
+		close(c.ReceiveChannel)
+		c.ReceiveChannel = nil
 	}
-	// Close the connection and ignore errors
-	c.conn.Close()
+	if c.SendChannel != nil {
+		close(c.SendChannel)
+		c.SendChannel = nil
+	}
+	if c.conn != nil {
+		// Close the connection and ignore errors
+		c.conn.Close()
+		c.conn = nil
+		//  Wait for the routines to stop
+		c.syncRoutines.Wait()
+		log.Tracef("Closing websocket")
 
-	// Close the channels
-	close(c.ReceiveChannel)
-	c.ReceiveChannel = nil
-	close(c.SendChannel)
-	c.SendChannel = nil
+	}
 
-	//  Wait for the routines to stop
-	c.syncRoutines.Wait()
-	log.Tracef("Closing websocket")
 }
 
 func (c *websocketClient) SendMap(message map[string]interface{}) {
@@ -122,7 +126,7 @@ func (c *websocketClient) writePump() {
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
 		ticker.Stop()
-		c.Close(true)
+		//c.Close(true)
 		c.syncRoutines.Done()
 	}()
 	for {
@@ -143,7 +147,10 @@ func (c *websocketClient) writePump() {
 			// Add queued messages to the current websocket message.
 			n := len(c.SendChannel)
 			for i := 0; i < n; i++ {
-				w.Write(<-c.SendChannel)
+				_, err = w.Write(<-c.SendChannel)
+				if err != nil {
+					return
+				}
 			}
 
 			if err := w.Close(); err != nil {
