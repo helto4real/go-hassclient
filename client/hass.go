@@ -129,9 +129,17 @@ func (a *HomeAssistantPlatform) Stop() {
 }
 
 func (a *HomeAssistantPlatform) connectWithReconnect() *websocketClient {
-	for {
 
-		client := ConnectWS(a.host, "/api/websocket", a.ssl)
+	var client *websocketClient
+
+	for {
+		if a.host == "hassio" {
+			client = ConnectWS(a.host, "/homeassistant/websocket", false)
+
+		} else {
+			client = ConnectWS(a.host, "/api/websocket", a.ssl)
+		}
+
 		if client == nil {
 			a.HassStatusChannel <- false
 			log.Println("Fail to connect, reconnecting to Home Assistant in 30 seconds...")
@@ -160,7 +168,12 @@ func (a *HomeAssistantPlatform) SetEntity(entity *HassEntity) bool {
 	if a.ssl == true {
 		scheme = "https"
 	}
-	u := url.URL{Scheme: scheme, Host: a.host, Path: "/api/states/" + url.PathEscape(entity.ID)}
+	var u url.URL
+	if a.host == "hassio" {
+		u = url.URL{Scheme: scheme, Host: a.host, Path: "/homeassistant/api/states/" + url.PathEscape(entity.ID)}
+	} else {
+		u = url.URL{Scheme: scheme, Host: a.host, Path: "/api/states/" + url.PathEscape(entity.ID)}
+	}
 
 	stateData := SetStateData{State: entity.New.State, Attributes: entity.New.Attributes}
 	b, err := json.Marshal(stateData)
