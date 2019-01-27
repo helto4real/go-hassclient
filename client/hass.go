@@ -303,7 +303,7 @@ func (a *HomeAssistantPlatform) handleMessage(message Result) {
 	} else if message.MessageType == "event" {
 		if message.Event.EventType == "state_changed" {
 			data := message.Event.Data
-			log.Debugf("message->: %s=%s", data.EntityId, data.NewState.State)
+			log.Tracef("message->: %s=%s", data.EntityId, data.NewState.State)
 			lastUpdated, _ := time.Parse(time.RFC3339, data.NewState.LastUpdated)
 			lastChanged, _ := time.Parse(time.RFC3339, data.NewState.LastChanged)
 			new := HassEntityState{
