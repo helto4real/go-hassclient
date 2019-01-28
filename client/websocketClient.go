@@ -95,7 +95,7 @@ func (c *websocketClient) Close() {
 		// Make sure subsequent calls to close just returns
 		return
 	}
-
+	c.isClosed = true
 	c.cancelWSClient()
 	//  Wait for the routines to stop
 	c.syncRoutines.Wait()
@@ -105,8 +105,6 @@ func (c *websocketClient) Close() {
 	c.conn.Close()
 
 	log.Tracef("Closing websocket")
-
-	c.isClosed = true
 
 }
 
@@ -147,6 +145,9 @@ func (c *websocketClient) writePump() {
 		case <-c.context.Done():
 			return
 		case message, ok := <-c.SendChannel:
+			if c.isClosed {
+				return
+			}
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if !ok {
 				// The hub closed the channel.
