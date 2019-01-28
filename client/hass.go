@@ -98,6 +98,12 @@ func (a *HomeAssistantPlatform) Start(host string, ssl bool, token string) bool 
 				if a.stopped {
 					return true // Return if stopped
 				}
+
+				// Delay 5 seconds before reconnecting
+				if a.delay(5) {
+					return true
+				}
+
 				a.wsClient = a.connectWithReconnect()
 				if a.wsClient == nil {
 					log.Println("Ending service discovery")
@@ -118,6 +124,15 @@ func (a *HomeAssistantPlatform) Start(host string, ssl bool, token string) bool 
 
 	}
 
+}
+func (a *HomeAssistantPlatform) delay(seconds time.Duration) bool {
+
+	select {
+	case <-time.After(seconds * time.Second):
+		return false
+	case <-a.context.Done():
+		return true
+	}
 }
 
 // Stop the Home Assistant client
@@ -144,11 +159,8 @@ func (a *HomeAssistantPlatform) connectWithReconnect() *websocketClient {
 		if client == nil {
 			a.HassStatusChannel <- false
 			log.Println("Fail to connect, reconnecting to Home Assistant in 30 seconds...")
-			// Fail to connect wait to connect again
-			select {
-			case <-time.After(30 * time.Second):
-
-			case <-a.context.Done():
+			// Fail to connect wait to connect again for 5 seconds
+			if a.delay(5) {
 				return nil
 			}
 
