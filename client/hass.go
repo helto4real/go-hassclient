@@ -98,7 +98,7 @@ func (a *HomeAssistantPlatform) Start(host string, ssl bool, token string) bool 
 				if a.stopped {
 					return true // Return if stopped
 				}
-
+				log.Println("No connection to Hass, retrying in 5 seconds...")
 				// Delay 5 seconds before reconnecting
 				if a.delay(5) {
 					return true
@@ -109,15 +109,16 @@ func (a *HomeAssistantPlatform) Start(host string, ssl bool, token string) bool 
 					log.Println("Ending service discovery")
 					return false
 				}
-			}
-			// s := string(message)
-			// fmt.Println(s)
-			var result Result
-			err := json.Unmarshal(message, &result)
-			if err != nil {
-				log.Error(err)
 			} else {
-				go a.handleMessage(result)
+				// s := string(message)
+				// fmt.Println(s)
+				var result Result
+				err := json.Unmarshal(message, &result)
+				if err != nil {
+					log.Error(err)
+				} else {
+					go a.handleMessage(result)
+				}
 			}
 
 		}
@@ -158,7 +159,7 @@ func (a *HomeAssistantPlatform) connectWithReconnect() *websocketClient {
 
 		if client == nil {
 			a.HassStatusChannel <- false
-			log.Println("Fail to connect, reconnecting to Home Assistant in 30 seconds...")
+			log.Println("No connection to Hass, retrying in 5 seconds...")
 			// Fail to connect wait to connect again for 5 seconds
 			if a.delay(5) {
 				return nil
