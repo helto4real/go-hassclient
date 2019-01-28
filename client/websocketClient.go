@@ -64,6 +64,10 @@ func (c *websocketClient) readPump() {
 	for {
 		_, message, err := c.conn.ReadMessage()
 
+		if c.isClosed {
+			return
+		}
+
 		select {
 		case <-c.context.Done():
 			return
@@ -109,7 +113,11 @@ func (c *websocketClient) Close() {
 }
 
 func (c *websocketClient) SendMap(message map[string]interface{}) {
-
+	c.m.Lock()
+	defer c.m.Unlock()
+	if c.isClosed {
+		return
+	}
 	jsonString, err := json.Marshal(message)
 	if err != nil {
 		log.Errorf("Error marshal message: %s", err)
@@ -121,6 +129,12 @@ func (c *websocketClient) SendMap(message map[string]interface{}) {
 }
 
 func (c *websocketClient) SendString(message string) {
+	c.m.Lock()
+	defer c.m.Unlock()
+
+	if c.isClosed {
+		return
+	}
 
 	c.SendChannel <- []byte(message)
 

@@ -93,6 +93,7 @@ func (a *HomeAssistantPlatform) Start(host string, ssl bool, token string) bool 
 		case <-a.context.Done():
 			return false
 		case message, mc := <-a.wsClient.ReceiveChannel:
+
 			if !mc {
 				if a.stopped {
 					return true // Return if stopped
