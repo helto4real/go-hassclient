@@ -126,7 +126,7 @@ func (c *websocketClient) writePump() {
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
 		ticker.Stop()
-		//c.Close(true)
+		c.Close(true)
 		c.syncRoutines.Done()
 	}()
 	for {
