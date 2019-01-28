@@ -73,7 +73,9 @@ func (c *websocketClient) readPump() {
 			return
 		default:
 			if err != nil {
-				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+				if websocket.IsUnexpectedCloseError(err, websocket.CloseNormalClosure) {
+					log.Tracef("Normal disconnect from host: %v", err)
+				} else if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 					log.Errorf("Unexpected close error: %v", err)
 				} else {
 					log.Errorf("Error reading websocket: %v", err)
