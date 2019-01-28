@@ -21,7 +21,7 @@ func main() {
 	go cl.Start("192.168.1.5:8123", false, "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJkOTY4YmFlOTIxZWE0MDhjODFkMTAxMmIyNjk2ZDMzYSIsImlhdCI6MTU0NDk0OTQxMCwiZXhwIjoxODYwMzA5NDEwfQ.1471xddOHHu3fBUoG1Pd63Gu2pUSLYkdXGCkfGpP1RI")
 
 	timeTickCheckState := time.Tick(5 * time.Second)
-	//timeTickToggle := time.Tick(25 * time.Second)
+	// timeTickToggle := time.Tick(10 * time.Second)
 	for {
 		select {
 		// case ev, mc := <-cl.HassCallServiceEventChannel:
@@ -64,8 +64,11 @@ func main() {
 		case <-osSignal:
 			log.Println("OS SIGNAL")
 			cl.Stop()
+
 		// case <-timeTickToggle:
-		// 	cl.CallService("toggle", map[string]string{"entity_id": "light.tomas_rum_fonster"})
+		// 	log.Print("Stopping...")
+		// 	cl.Stop()
+		// 	return
 		case <-timeTickCheckState:
 			//entity, ok := cl.GetEntity("light.tomas_rum_fonster")
 			//if ok {
@@ -91,6 +94,6 @@ func init() {
 	Formatter.ForceColors = false
 	Formatter.ForceFormatting = false
 	logrus.SetFormatter(Formatter)
-	logrus.SetLevel(logrus.DebugLevel)
+	logrus.SetLevel(logrus.TraceLevel)
 	//	log.Level = logrus.DebugLevel
 }

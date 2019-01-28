@@ -2,6 +2,7 @@ package client
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/url"
 	"sync"
@@ -38,10 +39,14 @@ type websocketClient struct {
 	SendChannel chan []byte
 	// Channel for receive data
 	ReceiveChannel chan []byte
-	// Set if websocket cant revocer and need to be reconnected
-	Fatal bool
 	// Used to wait for go routines end before close whole websocketClient
 	syncRoutines sync.WaitGroup
+	// Used to thread safe the close method
+	m sync.Mutex
+
+	context        context.Context
+	cancelWSClient context.CancelFunc
+	isClosed       bool
 }
 
 // readPump ensures only one reader per connection.
@@ -49,7 +54,7 @@ func (c *websocketClient) readPump() {
 	c.syncRoutines.Add(1)
 	defer func() {
 		c.syncRoutines.Done()
-		c.Close(true)
+		c.Close()
 		log.Traceln("Close ws readpump")
 
 	}()
@@ -58,43 +63,50 @@ func (c *websocketClient) readPump() {
 	c.conn.SetPongHandler(func(string) error { c.conn.SetReadDeadline(time.Now().Add(pongWait)); return nil })
 	for {
 		_, message, err := c.conn.ReadMessage()
-		if err != nil {
-			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				log.Errorf("Unexpected close error: %v", err)
-			} else {
-				log.Errorf("Error reading websocket: %v", err)
-			}
 
+		select {
+		case <-c.context.Done():
 			return
-		}
-		message = bytes.TrimSpace(bytes.Replace(message, newline, space, -1))
+		default:
+			if err != nil {
+				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+					log.Errorf("Unexpected close error: %v", err)
+				} else {
+					log.Errorf("Error reading websocket: %v", err)
+				}
 
-		c.ReceiveChannel <- message
+				return
+			}
+			message = bytes.TrimSpace(bytes.Replace(message, newline, space, -1))
+			log.Tracef("<-msg\n%s", string(message))
+			c.ReceiveChannel <- message
+		}
 
 	}
 }
 
 // Close the web socket client to free all resources and stop and wait for goroutines
-func (c *websocketClient) Close(fatal bool) {
-	c.Fatal = fatal
+func (c *websocketClient) Close() {
+	// Make sure we make close method thread safe
+	c.m.Lock()
+	defer c.m.Unlock()
 
-	if c.ReceiveChannel != nil {
-		close(c.ReceiveChannel)
-		c.ReceiveChannel = nil
+	if c.isClosed == true {
+		// Make sure subsequent calls to close just returns
+		return
 	}
-	if c.SendChannel != nil {
-		close(c.SendChannel)
-		c.SendChannel = nil
-	}
-	if c.conn != nil {
-		// Close the connection and ignore errors
-		c.conn.Close()
-		c.conn = nil
-		//  Wait for the routines to stop
-		c.syncRoutines.Wait()
-		log.Tracef("Closing websocket")
 
-	}
+	c.cancelWSClient()
+	//  Wait for the routines to stop
+	c.syncRoutines.Wait()
+
+	close(c.ReceiveChannel)
+	close(c.SendChannel)
+	c.conn.Close()
+
+	log.Tracef("Closing websocket")
+
+	c.isClosed = true
 
 }
 
@@ -126,11 +138,14 @@ func (c *websocketClient) writePump() {
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
 		ticker.Stop()
-		c.Close(true)
 		c.syncRoutines.Done()
+		c.Close()
+		log.Traceln("Close ws writepump")
 	}()
 	for {
 		select {
+		case <-c.context.Done():
+			return
 		case message, ok := <-c.SendChannel:
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if !ok {
@@ -144,6 +159,7 @@ func (c *websocketClient) writePump() {
 				return
 			}
 			w.Write(message)
+			log.Tracef("msg->%s", string(message))
 			// Add queued messages to the current websocket message.
 			n := len(c.SendChannel)
 			for i := 0; i < n; i++ {
@@ -167,7 +183,7 @@ func (c *websocketClient) writePump() {
 
 // ConnectWS connects to Web Socket
 func ConnectWS(ip string, path string, ssl bool) *websocketClient {
-	var scheme string = "ws"
+	var scheme = "ws"
 	if ssl == true {
 		scheme = "wss"
 	}
@@ -179,7 +195,10 @@ func ConnectWS(ip string, path string, ssl bool) *websocketClient {
 		return nil
 	}
 
-	client := &websocketClient{conn: c, SendChannel: make(chan []byte, 256), ReceiveChannel: make(chan []byte, 2), Fatal: false}
+	context, cancelWSClient := context.WithCancel(context.Background())
+
+	client := &websocketClient{conn: c, SendChannel: make(chan []byte, 256), ReceiveChannel: make(chan []byte, 2),
+		isClosed: false, context: context, cancelWSClient: cancelWSClient}
 
 	// Do write and read operations in own go routines
 	go client.writePump()

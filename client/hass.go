@@ -35,7 +35,7 @@ type HomeAssistantPlatform struct {
 	wsID              int64
 	getStateID        int64
 	getConfigID       int64
-	cancelDiscovery   context.CancelFunc
+	cancelHassLoop    context.CancelFunc
 	context           context.Context
 	token             string
 	HassChannel       chan interface{}
@@ -43,6 +43,7 @@ type HomeAssistantPlatform struct {
 	list              List
 	host              string
 	ssl               bool
+	stopped           bool
 	httpClient        *http.Client
 	HassConfig        *HassConfig
 }
@@ -55,14 +56,15 @@ type ServiceDataItem struct {
 
 // NewHassClient creates a new instance of the Home Assistant client
 func NewHassClient() *HomeAssistantPlatform {
-	context, cancelDiscovery := context.WithCancel(context.Background())
+	context, cancelHassLoop := context.WithCancel(context.Background())
 	return &HomeAssistantPlatform{
 		wsID:              1,
 		context:           context,
-		cancelDiscovery:   cancelDiscovery,
+		cancelHassLoop:    cancelHassLoop,
 		HassChannel:       make(chan interface{}, 10),
 		HassStatusChannel: make(chan bool, 2),
 		list:              NewEntityList(),
+		stopped:           false,
 		HassConfig:        &HassConfig{},
 		httpClient:        &http.Client{}}
 }
@@ -88,18 +90,18 @@ func (a *HomeAssistantPlatform) Start(host string, ssl bool, token string) bool 
 
 	for {
 		select {
+		case <-a.context.Done():
+			return false
 		case message, mc := <-a.wsClient.ReceiveChannel:
 			if !mc {
-				if a.wsClient.Fatal {
-					a.wsClient = a.connectWithReconnect()
-					if a.wsClient == nil {
-						log.Println("Ending service discovery")
-						return false
-					}
-				} else {
+				if a.stopped {
+					return true // Return if stopped
+				}
+				a.wsClient = a.connectWithReconnect()
+				if a.wsClient == nil {
+					log.Println("Ending service discovery")
 					return false
 				}
-
 			}
 			// s := string(message)
 			// fmt.Println(s)
@@ -111,8 +113,6 @@ func (a *HomeAssistantPlatform) Start(host string, ssl bool, token string) bool 
 				go a.handleMessage(result)
 			}
 
-		case <-a.context.Done():
-			return false
 		}
 
 	}
@@ -121,9 +121,9 @@ func (a *HomeAssistantPlatform) Start(host string, ssl bool, token string) bool 
 
 // Stop the Home Assistant client
 func (a *HomeAssistantPlatform) Stop() {
-
-	a.cancelDiscovery()
-	a.wsClient.Close(false)
+	a.stopped = true
+	a.cancelHassLoop()
+	a.wsClient.Close()
 	close(a.HassChannel)
 	close(a.HassStatusChannel)
 }
