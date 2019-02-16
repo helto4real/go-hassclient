@@ -1,7 +1,6 @@
 package wsocket
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"net/url"
@@ -19,6 +18,7 @@ type Connected interface {
 	SendMap(message map[string]interface{})
 	SendString(message string)
 	Read() ([]byte, bool)
+	IsClosed() bool
 }
 
 const (
@@ -46,24 +46,26 @@ type websocketClient struct {
 	conn *websocket.Conn
 
 	// Buffered channel of outbound messages.
-	SendChannel chan []byte
-	// Channel for receive data
-	ReceiveChannel chan []byte
+	sendChannel chan []byte
+	// Channel for receive meessages
+	receiveChannel chan []byte
 	// Used to wait for go routines end before close whole websocketClient
-	syncRoutines sync.WaitGroup
+	syncWriter sync.WaitGroup
+	syncReader sync.WaitGroup
 	// Used to thread safe the close method
 	m sync.Mutex
 
-	context        context.Context
-	cancelWSClient context.CancelFunc
-	isClosed       bool
+	context    context.Context
+	cancelFunc context.CancelFunc
+
+	isClosed bool
 }
 
 // readPump ensures only one reader per connection.
 func (c *websocketClient) readPump() {
-	c.syncRoutines.Add(1)
+
 	defer func() {
-		c.syncRoutines.Done()
+		c.syncReader.Done()
 		c.Close()
 		log.Traceln("Close ws readpump")
 
@@ -72,32 +74,22 @@ func (c *websocketClient) readPump() {
 	c.conn.SetReadDeadline(time.Now().Add(pongWait))
 	c.conn.SetPongHandler(func(string) error { c.conn.SetReadDeadline(time.Now().Add(pongWait)); return nil })
 	for {
-		_, message, err := c.conn.ReadMessage()
-
+		messageType, message, err := c.conn.ReadMessage()
+		if err != nil {
+			if websocket.IsCloseError(err, websocket.CloseNormalClosure) {
+				log.Errorf("Normal disconnect from host: %v", err)
+			} else {
+				log.Errorf("Unexpected websocket error: %v", err)
+			}
+			return
+		}
 		if c.isClosed {
 			return
 		}
 
-		select {
-		case <-c.context.Done():
-			return
-		default:
-			if err != nil {
-				if websocket.IsCloseError(err, websocket.CloseNormalClosure) {
-					log.Tracef("Normal disconnect from host: %v", err)
-				} else if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-					log.Errorf("Unexpected close error: %v", err)
-				} else {
-					log.Errorf("Error reading websocket: %v", err)
-				}
-
-				return
-			}
-			message = bytes.TrimSpace(bytes.Replace(message, newline, space, -1))
-			log.Tracef("<-msg\n%s", string(message))
-			c.ReceiveChannel <- message
+		if messageType == websocket.TextMessage {
+			c.receiveChannel <- message
 		}
-
 	}
 }
 
@@ -105,23 +97,36 @@ func (c *websocketClient) readPump() {
 func (c *websocketClient) Close() {
 	// Make sure we make close method thread safe
 	c.m.Lock()
-	defer c.m.Unlock()
 
 	if c.isClosed == true {
 		// Make sure subsequent calls to close just returns
+		c.m.Unlock()
 		return
 	}
 	c.isClosed = true
-	close(c.ReceiveChannel)
-	close(c.SendChannel)
-	c.conn.Close()
-
-	c.cancelWSClient()
 	//  Wait for the routines to stop
-	c.syncRoutines.Wait()
+	c.m.Unlock()
 
-	log.Tracef("Closing websocket")
+	// The sender
+	close(c.sendChannel)
+	c.syncWriter.Wait()
 
+	c.cancelFunc()
+
+	close(c.receiveChannel)
+
+	c.conn.Close()
+	c.syncReader.Wait()
+
+	log.Errorf("Closing websocket")
+
+}
+
+// IsClosed returns true if the connection closed
+func (c *websocketClient) IsClosed() bool {
+	c.m.Lock()
+	defer c.m.Unlock()
+	return c.isClosed
 }
 
 func (c *websocketClient) SendMap(message map[string]interface{}) {
@@ -132,11 +137,10 @@ func (c *websocketClient) SendMap(message map[string]interface{}) {
 	}
 	jsonString, err := json.Marshal(message)
 	if err != nil {
-		log.Errorf("Error marshal message: %s", err)
 		return
 	}
 
-	c.SendChannel <- jsonString
+	c.sendChannel <- jsonString
 
 }
 
@@ -148,19 +152,19 @@ func (c *websocketClient) SendString(message string) {
 		return
 	}
 
-	c.SendChannel <- []byte(message)
+	c.sendChannel <- []byte(message)
 
 }
 
 // Read the next message
 func (c *websocketClient) Read() ([]byte, bool) {
 	select {
-	case message, ok := <-c.ReceiveChannel:
+	case message, ok := <-c.receiveChannel:
 		if ok {
 			return message, true
 		}
 	case <-c.context.Done():
-		break
+		return nil, false
 	}
 	return nil, false
 }
@@ -171,47 +175,43 @@ func (c *websocketClient) Read() ([]byte, bool) {
 // application ensures that there is at most one writer to a connection by
 // executing all writes from this goroutine.
 func (c *websocketClient) writePump() {
-	c.syncRoutines.Add(1)
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
 		ticker.Stop()
-		c.syncRoutines.Done()
+		c.syncWriter.Done()
 		c.Close()
 		log.Traceln("Close ws writepump")
 	}()
 	for {
 		select {
-		case <-c.context.Done():
-			return
-		case message, ok := <-c.SendChannel:
+		case message, ok := <-c.sendChannel:
 			if c.isClosed {
 				return
 			}
-			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			if err := c.conn.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
+				return
+			}
+
 			if !ok {
 				// The hub closed the channel.
 				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}
-
-			w, err := c.conn.NextWriter(websocket.TextMessage)
-			if err != nil {
+			// var w io.WriteCloser
+			if w, err := c.conn.NextWriter(websocket.TextMessage); err != nil {
 				return
-			}
-			w.Write(message)
-			log.Tracef("msg->%s", string(message))
-			// Add queued messages to the current websocket message.
-			n := len(c.SendChannel)
-			for i := 0; i < n; i++ {
-				_, err = w.Write(<-c.SendChannel)
-				if err != nil {
+			} else {
+				if _, err := w.Write(message); err != nil {
+					return
+				}
+
+				log.Tracef("msg->%s", string(message))
+
+				if err := w.Close(); err != nil {
 					return
 				}
 			}
 
-			if err := w.Close(); err != nil {
-				return
-			}
 		case <-ticker.C:
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
@@ -235,13 +235,15 @@ func ConnectWS(ip string, path string, ssl bool) Connected {
 		return nil
 	}
 
-	context, cancelWSClient := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.Background())
 
-	client := &websocketClient{conn: c, SendChannel: make(chan []byte, 256), ReceiveChannel: make(chan []byte, 2),
-		isClosed: false, context: context, cancelWSClient: cancelWSClient}
+	client := &websocketClient{conn: c, sendChannel: make(chan []byte, 256), receiveChannel: make(chan []byte, 2),
+		isClosed: false, context: ctx, cancelFunc: cancel}
 
 	// Do write and read operations in own go routines
+	client.syncWriter.Add(1)
 	go client.writePump()
+	client.syncReader.Add(1)
 	go client.readPump()
 
 	return client
