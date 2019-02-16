@@ -10,6 +10,7 @@ import (
 
 	"time"
 
+	ws "github.com/helto4real/go-hassclient/internal/wsocket"
 	"github.com/sirupsen/logrus"
 )
 
@@ -29,9 +30,9 @@ type HomeAssistant interface {
 	GetConfig() *HassConfig
 }
 
-// HomeAssistantPlatform implements integration with Home Assistant
-type HomeAssistantPlatform struct {
-	wsClient          *websocketClient
+// homeAssistantPlatform implements integration with Home Assistant
+type homeAssistantPlatform struct {
+	wsClient          ws.Connected
 	wsID              int64
 	getStateID        int64
 	getConfigID       int64
@@ -55,9 +56,9 @@ type ServiceDataItem struct {
 }
 
 // NewHassClient creates a new instance of the Home Assistant client
-func NewHassClient() *HomeAssistantPlatform {
+func NewHassClient() HomeAssistant {
 	context, cancelHassLoop := context.WithCancel(context.Background())
-	return &HomeAssistantPlatform{
+	return &homeAssistantPlatform{
 		wsID:              1,
 		context:           context,
 		cancelHassLoop:    cancelHassLoop,
@@ -69,20 +70,20 @@ func NewHassClient() *HomeAssistantPlatform {
 		httpClient:        &http.Client{}}
 }
 
-func (a *HomeAssistantPlatform) GetConfig() *HassConfig {
+func (a *homeAssistantPlatform) GetConfig() *HassConfig {
 	return a.HassConfig
 }
 
-func (a *HomeAssistantPlatform) GetHassChannel() chan interface{} {
+func (a *homeAssistantPlatform) GetHassChannel() chan interface{} {
 	return a.HassChannel
 }
 
-func (a *HomeAssistantPlatform) GetStatusChannel() chan bool {
+func (a *homeAssistantPlatform) GetStatusChannel() chan bool {
 	return a.HassStatusChannel
 }
 
 // Start the Home Assistant Client
-func (a *HomeAssistantPlatform) Start(host string, ssl bool, token string) bool {
+func (a *homeAssistantPlatform) Start(host string, ssl bool, token string) bool {
 	a.token = token
 	a.host = host
 	a.ssl = ssl
@@ -92,9 +93,10 @@ func (a *HomeAssistantPlatform) Start(host string, ssl bool, token string) bool 
 		select {
 		case <-a.context.Done():
 			return false
-		case message, mc := <-a.wsClient.ReceiveChannel:
+		default:
+			message, ok := a.wsClient.Read()
 
-			if !mc {
+			if !ok {
 				if a.stopped {
 					return true // Return if stopped
 				}
@@ -126,7 +128,7 @@ func (a *HomeAssistantPlatform) Start(host string, ssl bool, token string) bool 
 	}
 
 }
-func (a *HomeAssistantPlatform) delay(seconds time.Duration) bool {
+func (a *homeAssistantPlatform) delay(seconds time.Duration) bool {
 
 	select {
 	case <-time.After(seconds * time.Second):
@@ -137,7 +139,7 @@ func (a *HomeAssistantPlatform) delay(seconds time.Duration) bool {
 }
 
 // Stop the Home Assistant client
-func (a *HomeAssistantPlatform) Stop() {
+func (a *homeAssistantPlatform) Stop() {
 	a.stopped = true
 	a.cancelHassLoop()
 	a.wsClient.Close()
@@ -145,16 +147,16 @@ func (a *HomeAssistantPlatform) Stop() {
 	close(a.HassStatusChannel)
 }
 
-func (a *HomeAssistantPlatform) connectWithReconnect() *websocketClient {
+func (a *homeAssistantPlatform) connectWithReconnect() ws.Connected {
 
-	var client *websocketClient
+	var client ws.Connected
 
 	for {
 		if a.host == "hassio" {
-			client = ConnectWS(a.host, "/homeassistant/websocket", false)
+			client = ws.ConnectWS(a.host, "/homeassistant/websocket", false)
 
 		} else {
-			client = ConnectWS(a.host, "/api/websocket", a.ssl)
+			client = ws.ConnectWS(a.host, "/api/websocket", a.ssl)
 		}
 
 		if client == nil {
@@ -172,12 +174,12 @@ func (a *HomeAssistantPlatform) connectWithReconnect() *websocketClient {
 }
 
 // GetEntity returns the entity
-func (a *HomeAssistantPlatform) GetEntity(entity string) (*HassEntity, bool) {
+func (a *homeAssistantPlatform) GetEntity(entity string) (*HassEntity, bool) {
 	return a.list.GetEntity(entity)
 }
 
 // SetEntity sets the entity to the map
-func (a *HomeAssistantPlatform) SetEntity(entity *HassEntity) bool {
+func (a *homeAssistantPlatform) SetEntity(entity *HassEntity) bool {
 	var scheme = "http"
 	if a.ssl == true {
 		scheme = "https"
@@ -215,7 +217,7 @@ func (a *HomeAssistantPlatform) SetEntity(entity *HassEntity) bool {
 }
 
 //CallService makes a service call through the Home Assistant API
-func (a *HomeAssistantPlatform) CallService(service string, serviceData map[string]string) {
+func (a *homeAssistantPlatform) CallService(service string, serviceData map[string]string) {
 	a.wsID = a.wsID + 1
 
 	s := map[string]interface{}{
@@ -230,7 +232,7 @@ func (a *HomeAssistantPlatform) CallService(service string, serviceData map[stri
 }
 
 // Send a generic message to Home Assistant websocket API
-func (a *HomeAssistantPlatform) sendMessage(messageType string) {
+func (a *homeAssistantPlatform) sendMessage(messageType string) {
 	a.wsID = a.wsID + 1
 	s := map[string]interface{}{
 		"id":   a.wsID,
@@ -245,7 +247,7 @@ func (a *HomeAssistantPlatform) sendMessage(messageType string) {
 
 }
 
-func (a *HomeAssistantPlatform) subscribeEventsStateChanged() {
+func (a *homeAssistantPlatform) subscribeEventsStateChanged() {
 	a.wsID = a.wsID + 1
 	s := map[string]interface{}{
 		"id":   a.wsID,
@@ -255,7 +257,7 @@ func (a *HomeAssistantPlatform) subscribeEventsStateChanged() {
 
 }
 
-// func (a *HomeAssistantPlatform) subscribeEventsCallService() {
+// func (a *homeAssistantPlatform) subscribeEventsCallService() {
 // 	a.wsID = a.wsID + 1
 // 	s := map[string]interface{}{
 // 		"id":         a.wsID,
@@ -266,7 +268,7 @@ func (a *HomeAssistantPlatform) subscribeEventsStateChanged() {
 
 // }
 
-func (a *HomeAssistantPlatform) handleMessage(message Result) {
+func (a *homeAssistantPlatform) handleMessage(message Result) {
 
 	if message.MessageType == "auth_required" {
 		//	log.Print("message->: ", message)

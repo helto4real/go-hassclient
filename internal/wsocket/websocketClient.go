@@ -1,4 +1,4 @@
-package client
+package wsocket
 
 import (
 	"bytes"
@@ -9,7 +9,17 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/sirupsen/logrus"
 )
+
+var log *logrus.Entry
+
+type Connected interface {
+	Close()
+	SendMap(message map[string]interface{})
+	SendString(message string)
+	Read() ([]byte, bool)
+}
 
 const (
 	// Time allowed to write a message to the peer.
@@ -102,13 +112,13 @@ func (c *websocketClient) Close() {
 		return
 	}
 	c.isClosed = true
-	c.cancelWSClient()
-	//  Wait for the routines to stop
-	c.syncRoutines.Wait()
-
 	close(c.ReceiveChannel)
 	close(c.SendChannel)
 	c.conn.Close()
+
+	c.cancelWSClient()
+	//  Wait for the routines to stop
+	c.syncRoutines.Wait()
 
 	log.Tracef("Closing websocket")
 
@@ -140,6 +150,19 @@ func (c *websocketClient) SendString(message string) {
 
 	c.SendChannel <- []byte(message)
 
+}
+
+// Read the next message
+func (c *websocketClient) Read() ([]byte, bool) {
+	select {
+	case message, ok := <-c.ReceiveChannel:
+		if ok {
+			return message, true
+		}
+	case <-c.context.Done():
+		break
+	}
+	return nil, false
 }
 
 // writePump pumps messages to the websocket connection.
@@ -199,7 +222,7 @@ func (c *websocketClient) writePump() {
 }
 
 // ConnectWS connects to Web Socket
-func ConnectWS(ip string, path string, ssl bool) *websocketClient {
+func ConnectWS(ip string, path string, ssl bool) Connected {
 	var scheme = "ws"
 	if ssl == true {
 		scheme = "wss"
@@ -222,4 +245,10 @@ func ConnectWS(ip string, path string, ssl bool) *websocketClient {
 	go client.readPump()
 
 	return client
+}
+
+func init() {
+
+	log = logrus.WithField("prefix", "hassclient")
+
 }
