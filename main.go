@@ -2,6 +2,7 @@
 package main
 
 import (
+	c "github.com/helto4real/go-hassclient/client"
 	"github.com/sirupsen/logrus"
 	prefixed "github.com/x-cray/logrus-prefixed-formatter"
 )
@@ -12,9 +13,9 @@ func main() {
 
 	// osSignal := make(chan os.Signal, 1)
 
-	// cl := c.NewHassClient()
+	cl := c.NewHassClient()
 
-	// go cl.Start("192.168.1.5:8123", false, "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJkOTY4YmFlOTIxZWE0MDhjODFkMTAxMmIyNjk2ZDMzYSIsImlhdCI6MTU0NDk0OTQxMCwiZXhwIjoxODYwMzA5NDEwfQ.1471xddOHHu3fBUoG1Pd63Gu2pUSLYkdXGCkfGpP1RI")
+	go cl.Start("192.168.1.5:8123", false, "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJkOTY4YmFlOTIxZWE0MDhjODFkMTAxMmIyNjk2ZDMzYSIsImlhdCI6MTU0NDk0OTQxMCwiZXhwIjoxODYwMzA5NDEwfQ.1471xddOHHu3fBUoG1Pd63Gu2pUSLYkdXGCkfGpP1RI")
 
 	// timeTickCheckState := time.Tick(5 * time.Second)
 	// timeTickToggle := time.Tick(10 * time.Second)

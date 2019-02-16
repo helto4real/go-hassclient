@@ -52,7 +52,7 @@ func TestIntegrationWebSocketReturnSameValue(t *testing.T) {
 	t.Run("TestSendString",
 		func(*testing.T) {
 			wClient.SendString("Hello world!")
-			result := string(<-wClient.ReceiveChannel)
+			result, _ := wClient.Read()
 			h.Equals(t, string(result), "Hello world!")
 		})
 
@@ -61,8 +61,8 @@ func TestIntegrationWebSocketReturnSameValue(t *testing.T) {
 			wClient.SendMap(map[string]interface{}{
 				"test":    "hello",
 				"integer": 100})
-			result := string(<-wClient.ReceiveChannel)
-			h.Equals(t, result, "{\"integer\":100,\"test\":\"hello\"}")
+			result, _ := wClient.Read()
+			h.Equals(t, string(result), "{\"integer\":100,\"test\":\"hello\"}")
 		})
 
 	wClient.Close()
