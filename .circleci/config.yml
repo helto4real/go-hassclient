@@ -45,4 +45,4 @@ jobs: # basic units of work in a run
           destination: builds
 
       # Finally publish to "coveralls"
-      # - run: /go/bin/goveralls -coverprofile=builds/coverage.out -service=circle-ci -repotoken $COVERALLS_TOKEN
+      - run: /go/bin/goveralls -coverprofile=builds/coverage.out -service=circle-ci -repotoken $COVERALLS_TOKEN
