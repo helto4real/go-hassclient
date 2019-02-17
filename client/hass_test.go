@@ -105,6 +105,22 @@ func TestIntegrationWebSocket(t *testing.T) {
 		})
 }
 
+func TestHassEntityString(t *testing.T) {
+	entity := c.NewHassEntity("id1", "name1", c.HassEntityState{
+		State: "Old state"}, c.HassEntityState{
+		State: "New state",
+		Attributes: map[string]interface{}{
+			"attr1": "attrvalue",
+		}})
+
+	str := entity.String()
+
+	h.Equals(t, true, strings.Contains(str, "name1"))
+	h.Equals(t, true, strings.Contains(str, "New state"))
+	h.Equals(t, true, strings.Contains(str, "attr1"))
+	h.Equals(t, true, strings.Contains(str, "attrvalue"))
+}
+
 func TestIntegrationWebSocketSSL(t *testing.T) {
 	fake := newFakeConnected()
 	fakePoster := newFakePoster()

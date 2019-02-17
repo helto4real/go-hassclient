@@ -18,26 +18,6 @@ func NewEntityList() List {
 	return List{entities: make(map[string]HassEntity)}
 }
 
-// GetEntities returns a thread safe way to get all entities through a channel
-//
-func (a *List) GetEntities() chan HassEntity {
-	a.m.Lock()
-
-	defer a.m.Unlock()
-
-	if len(a.entities) == 0 {
-		return nil
-	}
-
-	entityChannel := make(chan HassEntity, len(a.entities))
-	defer close(entityChannel)
-
-	for _, entity := range a.entities {
-		entityChannel <- entity
-	}
-	return entityChannel
-}
-
 // GetEntity returns entity given the entity id, second return value returns false if no entity exists
 func (a *List) GetEntity(entityID string) (*HassEntity, bool) {
 	a.m.Lock()
