@@ -10,7 +10,7 @@ import (
 )
 
 var (
-	IntegrationFlag = flag.Bool("integration", true, "run integration tests")
+	IntegrationFlag = flag.Bool("integration", false, "run integration tests")
 )
 
 // assert fails the test if the condition is false.
