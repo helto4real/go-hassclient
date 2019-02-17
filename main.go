@@ -27,11 +27,11 @@ func main() {
 		// case ev, mc := <-cl.HassCallServiceEventChannel:
 		// 	//log.Printf("%v", message)
 
-		// case message, mc := <-cl.HassChannel:
-		// 	if !mc {
-		// 		log.Println("Main channel terminating, exiting Loop")
-		// 		return
-		// 	}
+		case _, mc := <-cl.GetHassChannel():
+			if !mc {
+				log.Println("Main channel terminating, exiting Loop")
+				return
+			}
 		// 	switch m := message.(type) {
 		// 	case c.HassEntity:
 		// 		//log.Info(m)

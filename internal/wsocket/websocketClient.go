@@ -3,6 +3,7 @@ package wsocket
 import (
 	"context"
 	"encoding/json"
+	"io/ioutil"
 	"net/url"
 	"sync"
 	"time"
@@ -88,6 +89,7 @@ func (c *websocketClient) readPump() {
 		}
 
 		if messageType == websocket.TextMessage {
+			ioutil.WriteFile("test.json", message, 0)
 			c.receiveChannel <- message
 		}
 	}

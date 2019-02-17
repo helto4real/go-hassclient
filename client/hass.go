@@ -10,11 +10,20 @@ import (
 
 	"time"
 
+	"github.com/helto4real/go-hassclient/internal/wsocket"
 	ws "github.com/helto4real/go-hassclient/internal/wsocket"
 	"github.com/sirupsen/logrus"
 )
 
 var log *logrus.Entry
+
+// Used to mock the connection to websocket
+type connectWSFunction func(host, path string, ssl bool) ws.Connected
+
+var (
+	getConnected    connectWSFunction = connectWS
+	connectionDelay                   = time.Duration(5)
+)
 
 // HomeAssistant interface represents Home Assistant
 type HomeAssistant interface {
@@ -28,6 +37,11 @@ type HomeAssistant interface {
 	GetHassChannel() chan interface{}
 	GetStatusChannel() chan bool
 	GetConfig() *HassConfig
+}
+
+// HassHTTPPoster interface is for mocking the http post to Hass API
+type HassHTTPPoster interface {
+	HassHTTPPostAPI(url string, data []byte) bool
 }
 
 // homeAssistantPlatform implements integration with Home Assistant
@@ -47,6 +61,7 @@ type homeAssistantPlatform struct {
 	stopped           bool
 	httpClient        *http.Client
 	HassConfig        *HassConfig
+	poster            HassHTTPPoster
 }
 
 // ServiceDataItem is used for a convenient way to provide service data in a variadic function CallService
@@ -55,8 +70,15 @@ type ServiceDataItem struct {
 	Value string
 }
 
-// NewHassClient creates a new instance of the Home Assistant client
-func NewHassClient() HomeAssistant {
+// NewHassClientFakeConnection only used for mocking real connectio to Hass
+func NewHassClientFakeConnection(fakeConnection wsocket.Connected, fakePoster HassHTTPPoster) HomeAssistant {
+	client := newHassClient()
+	client.wsClient = fakeConnection
+	client.poster = fakePoster
+	return client
+}
+
+func newHassClient() *homeAssistantPlatform {
 	context, cancelHassLoop := context.WithCancel(context.Background())
 	return &homeAssistantPlatform{
 		wsID:              1,
@@ -68,6 +90,11 @@ func NewHassClient() HomeAssistant {
 		stopped:           false,
 		HassConfig:        &HassConfig{},
 		httpClient:        &http.Client{}}
+}
+
+// NewHassClient creates a new instance of the Home Assistant client
+func NewHassClient() HomeAssistant {
+	return newHassClient()
 }
 
 func (a *homeAssistantPlatform) GetConfig() *HassConfig {
@@ -82,12 +109,17 @@ func (a *homeAssistantPlatform) GetStatusChannel() chan bool {
 	return a.HassStatusChannel
 }
 
-// Start the Home Assistant Client
+// Start the Home Assistant Client, use nil for fake, only for testing
 func (a *homeAssistantPlatform) Start(host string, ssl bool, token string) bool {
 	a.token = token
 	a.host = host
 	a.ssl = ssl
-	a.wsClient = a.connectWithReconnect()
+	if a.wsClient == nil {
+		a.wsClient = a.connectWithReconnect()
+	}
+	if a.poster == nil {
+		a.poster = a
+	}
 
 	for {
 		select {
@@ -102,7 +134,7 @@ func (a *homeAssistantPlatform) Start(host string, ssl bool, token string) bool 
 				}
 				log.Println("No connection to Hass, retrying in 5 seconds...")
 				// Delay 5 seconds before reconnecting
-				if a.delay(5) {
+				if a.delay(connectionDelay) {
 					return true
 				}
 
@@ -142,28 +174,34 @@ func (a *homeAssistantPlatform) delay(seconds time.Duration) bool {
 func (a *homeAssistantPlatform) Stop() {
 	a.stopped = true
 	a.cancelHassLoop()
-	a.wsClient.Close()
+	if a.wsClient != nil {
+		a.wsClient.Close()
+	}
 	close(a.HassChannel)
 	close(a.HassStatusChannel)
 }
 
+// connects to the websocket
+func connectWS(host, path string, ssl bool) ws.Connected {
+	return ws.ConnectWS(host, path, ssl)
+}
 func (a *homeAssistantPlatform) connectWithReconnect() ws.Connected {
 
 	var client ws.Connected
 
 	for {
 		if a.host == "hassio" {
-			client = ws.ConnectWS(a.host, "/homeassistant/websocket", false)
+			client = getConnected(a.host, "/homeassistant/websocket", false)
 
 		} else {
-			client = ws.ConnectWS(a.host, "/api/websocket", a.ssl)
+			client = getConnected(a.host, "/api/websocket", a.ssl)
 		}
 
 		if client == nil {
 			a.HassStatusChannel <- false
 			log.Println("No connection to Hass, retrying in 5 seconds...")
 			// Fail to connect wait to connect again for 5 seconds
-			if a.delay(5) {
+			if a.delay(connectionDelay) {
 				return nil
 			}
 
@@ -176,6 +214,22 @@ func (a *homeAssistantPlatform) connectWithReconnect() ws.Connected {
 // GetEntity returns the entity
 func (a *homeAssistantPlatform) GetEntity(entity string) (*HassEntity, bool) {
 	return a.list.GetEntity(entity)
+}
+func (a *homeAssistantPlatform) HassHTTPPostAPI(url string, data []byte) bool {
+	req, err := http.NewRequest("POST", url, bytes.NewReader(data))
+	if err == nil {
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+a.token)
+
+		resp, err := a.httpClient.Do(req)
+		if err == nil {
+			defer resp.Body.Close()
+			if resp.StatusCode == 200 || resp.StatusCode == 201 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // SetEntity sets the entity to the map
@@ -199,20 +253,7 @@ func (a *homeAssistantPlatform) SetEntity(entity *HassEntity) bool {
 		return false
 	}
 
-	req, err := http.NewRequest("POST", u.String(), bytes.NewReader(b))
-	if err == nil {
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+a.token)
-
-		resp, err := a.httpClient.Do(req)
-		if err == nil {
-			defer resp.Body.Close()
-			if resp.StatusCode == 200 || resp.StatusCode == 201 {
-				return true
-			}
-		}
-	}
-	return false
+	return a.poster.HassHTTPPostAPI(u.String(), b)
 
 }
 
@@ -346,8 +387,6 @@ func (a *homeAssistantPlatform) handleMessage(message Result) {
 				message.Event.Data.Service, message.Event.Data.ServiceData)
 			a.HassChannel <- *newHassCallServiceEvent
 
-		} else {
-			//log.Warning(message)
 		}
 
 	}

@@ -16,7 +16,7 @@ import (
 )
 
 var (
-	integration   *bool = flag.Bool("integration", true, "run integration tests")
+	// h.IntegrationFlag   *bool = flag.Bool("h.IntegrationFlag", false, "run h.IntegrationFlag tests")
 	port          int
 	cancelFunc    func()
 	clientServers map[wsClientServer]bool = map[wsClientServer]bool{}
@@ -25,14 +25,14 @@ var (
 func TestMain(m *testing.M) {
 	flag.Parse()
 
-	if *integration {
+	if *h.IntegrationFlag {
 		port, cancelFunc = SetupWebSocketFakeServer()
 
 	}
 
 	os.Exit(m.Run())
 
-	if *integration {
+	if *h.IntegrationFlag {
 		cancelFunc()
 	}
 }
@@ -41,7 +41,7 @@ func TestMain(m *testing.M) {
 // works. It uses the mock server to do actual connection and the mock server
 // will return same thing that are sent.
 func TestIntegrationWebSocket(t *testing.T) {
-	if !*integration {
+	if !*h.IntegrationFlag {
 		t.Skip()
 		return
 	}
@@ -111,45 +111,6 @@ func TestIntegrationWebSocket(t *testing.T) {
 			h.Equals(t, false, ok)
 		})
 }
-
-// func TestNotConnected(t *testing.T) {
-// 	if !*integration {
-// 		t.Skip()
-// 		return
-// 	}
-
-// }
-
-// func TestClientHardDisconnect(t *testing.T) {
-// 	if !*integration {
-// 		t.Skip()
-// 		return
-// 	}
-// 	wClient := ws.ConnectWS(fmt.Sprintf("127.0.0.1:%v", port), "/ws", false)
-
-// 	wClient.Close()
-
-// 	_, ok := wClient.Read()
-
-// 	h.Equals(t, false, ok)
-// }
-
-// func TestClientGracefulDisconnect(t *testing.T) {
-// 	if !*integration {
-// 		t.Skip()
-// 		return
-// 	}
-// 	wClient := ws.ConnectWS(fmt.Sprintf("127.0.0.1:%v", port), "/ws", false)
-
-// 	go wClient.SendString("close")
-
-// 	fmt.Println("GÖR ETT TEST")
-// 	time.Sleep(time.Second * 1)
-// 	// _, ok := wClient.Read()
-// 	// h.Equals(t, false, ok)
-// 	h.Equals(t, true, wClient.IsClosed())
-// 	wClient.Close()
-// }
 
 const (
 	// Time allowed to write a message to the peer.

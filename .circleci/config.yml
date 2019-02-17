@@ -30,8 +30,8 @@ jobs: # basic units of work in a run
           command: |
             # Use gox for multiple platforms
             gox -os="linux darwin windows" -arch="amd64"
-            # Test with cover and race check
-            go test -p 6 -v -race -cover -coverprofile=builds/coverage.out ./...
+            # Test with cover and race check and also test integrations
+            go test -p 6 -v -race -cover -coverprofile=builds/coverage.out ./... -integrations
 
       # Cache the loaded packages for faster use
       - save_cache: # Store cache in the /go/pkg directory

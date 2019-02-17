@@ -1,11 +1,16 @@
 package test
 
 import (
+	"flag"
 	"fmt"
 	"path/filepath"
 	"reflect"
 	"runtime"
 	"testing"
+)
+
+var (
+	IntegrationFlag = flag.Bool("integration", true, "run integration tests")
 )
 
 // assert fails the test if the condition is false.
